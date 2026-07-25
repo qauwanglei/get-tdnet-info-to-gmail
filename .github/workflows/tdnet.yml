@@ -1,0 +1,61 @@
+name: TDnet Monitor
+
+on:
+  schedule:
+    # cron は UTC 基準。日本時間 8:00-18:00（平日）を3つに分けてカバーする。
+    # 1) UTC日曜-木曜 23:00-23:55  = JST月曜-金曜 8:00-8:55（日付が変わる分）
+    - cron: "*/5 23 * * 0-4"
+    # 2) UTC月曜-金曜 00:00-08:55  = JST月曜-金曜 9:00-17:55
+    - cron: "*/5 0-8 * * 1-5"
+    # 3) UTC月曜-金曜 09:00        = JST月曜-金曜 18:00（最後の1回）
+    - cron: "0 9 * * 1-5"
+  workflow_dispatch: {}  # Actionsタブから手動実行できるように
+
+# stateファイルをリポジトリにコミットし直すために書き込み権限が必要
+permissions:
+  contents: write
+
+# 5分おきに走るジョブが重なった場合に、前のrunが終わるまで待たせる
+concurrency:
+  group: tdnet-monitor
+  cancel-in-progress: false
+
+jobs:
+  run-monitor:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Compute JST date
+        id: jst_date
+        run: echo "date=$(TZ='Asia/Tokyo' date +%Y%m%d)" >> "$GITHUB_OUTPUT"
+
+      - name: Run TDnet monitor
+        env:
+          GMAIL_USER: ${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          RECIPIENT_EMAIL: ${{ secrets.RECIPIENT_EMAIL }}
+          TARGET_CODES: ${{ secrets.TARGET_CODES }}
+        run: python3 monitor.py --date "${{ steps.jst_date.outputs.date }}"
+
+      - name: Commit updated state
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add state/
+          if git diff --cached --quiet; then
+            echo "No state changes to commit."
+          else
+            git commit -m "chore: update tdnet notified state"
+            git pull --rebase origin "${GITHUB_REF_NAME}"
+            git push origin "HEAD:${GITHUB_REF_NAME}"
+          fi
