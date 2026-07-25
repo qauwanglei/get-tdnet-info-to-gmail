@@ -42,6 +42,11 @@ import requests
 from bs4 import BeautifulSoup
 
 try:
+    import jpholiday
+except ImportError:
+    jpholiday = None
+
+try:
     from dotenv import load_dotenv
 
     load_dotenv()  # .env が無ければ何もしない。GitHub Actions ではSecretsが直接環境変数になる
@@ -61,6 +66,29 @@ HEADERS = {
 REQUEST_INTERVAL_SEC = 1.5  # サーバー負荷軽減のため、ページ間で少し待つ
 
 STATE_DIR = "state"
+
+
+def is_market_holiday(date_obj: dt.date) -> Optional[str]:
+    """東証が休場と考えられる日ならその理由（文字列）を返す。開場日ならNone。
+
+    - 土日
+    - 日本の祝日（jpholidayライブラリ）
+    - 年末年始（12/31-1/3、東証は祝日扱いではないが毎年休場になる）
+    """
+    if date_obj.weekday() >= 5:  # 5=土, 6=日
+        return "週末"
+
+    if (date_obj.month == 12 and date_obj.day == 31) or (
+        date_obj.month == 1 and date_obj.day <= 3
+    ):
+        return "年末年始休場"
+
+    if jpholiday is not None:
+        holiday_name = jpholiday.is_holiday_name(date_obj)
+        if holiday_name:
+            return f"祝日（{holiday_name}）"
+
+    return None
 
 
 def make_key(item: Dict) -> str:
@@ -274,11 +302,23 @@ def main():
         action="store_true",
         help="新規判定を無視して、フィルタ後の当日全件を通知する",
     )
+    parser.add_argument(
+        "--ignore-holiday",
+        action="store_true",
+        help="休場日判定を無視して強制的に実行する（手動テスト用）",
+    )
     args = parser.parse_args()
 
     if args.debug_html:
         debug_dump_html(args.date)
         return
+
+    if not args.ignore_holiday:
+        date_obj = dt.datetime.strptime(args.date, "%Y%m%d").date()
+        holiday_reason = is_market_holiday(date_obj)
+        if holiday_reason:
+            print(f"[INFO] {args.date} は{holiday_reason}のため、処理をスキップします。")
+            return
 
     codes_env = os.environ.get("TARGET_CODES", "").strip()
     codes = [c.strip() for c in codes_env.split(",")] if codes_env else None
