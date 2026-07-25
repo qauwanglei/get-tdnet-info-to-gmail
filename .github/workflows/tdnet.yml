@@ -56,6 +56,4 @@ jobs:
             echo "No state changes to commit."
           else
             git commit -m "chore: update tdnet notified state"
-            git pull --rebase origin "${GITHUB_REF_NAME}"
-            git push origin "HEAD:${GITHUB_REF_NAME}"
-          fi
+            git pull --rebase origin "${GITHUB_REF
