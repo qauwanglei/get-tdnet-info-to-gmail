@@ -9,7 +9,17 @@ on:
     - cron: "*/5 0-8 * * 1-5"
     # 3) UTC月曜-金曜 09:00        = JST月曜-金曜 18:00（最後の1回）
     - cron: "0 9 * * 1-5"
-  workflow_dispatch: {}  # Actionsタブから手動実行できるように
+  workflow_dispatch:  # Actionsタブから手動実行できるように
+    inputs:
+      date:
+        description: "対象日 (YYYYMMDD, JST基準)。空欄なら実行時点のJST日付を自動計算"
+        required: false
+        default: ""
+      ignore_holiday:
+        description: "休日/週末判定を無視して強制実行する"
+        required: false
+        default: false
+        type: boolean
 
 # stateファイルをリポジトリにコミットし直すために書き込み権限が必要
 permissions:
@@ -23,7 +33,7 @@ concurrency:
 jobs:
   run-monitor:
     runs-on: ubuntu-latest
-    environment: Development  # Secretsが登録されているEnvironment名に合わせて変更
+    environment: Development  # ← Secretsが登録されているEnvironment名に合わせて変更
     steps:
       - name: Checkout repo
         uses: actions/checkout@v5
@@ -36,9 +46,14 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Compute JST date
-        id: jst_date
-        run: echo "date=$(TZ='Asia/Tokyo' date +%Y%m%d)" >> "$GITHUB_OUTPUT"
+      - name: Determine target date
+        id: target_date
+        run: |
+          if [ -n "${{ github.event.inputs.date }}" ]; then
+            echo "date=${{ github.event.inputs.date }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "date=$(TZ='Asia/Tokyo' date +%Y%m%d)" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Run TDnet monitor
         env:
@@ -46,7 +61,12 @@ jobs:
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
           RECIPIENT_EMAIL: ${{ secrets.RECIPIENT_EMAIL }}
           TARGET_CODES: ${{ secrets.TARGET_CODES }}
-        run: python3 monitor.py --date "${{ steps.jst_date.outputs.date }}"
+        run: |
+          ARGS="--date ${{ steps.target_date.outputs.date }}"
+          if [ "${{ github.event.inputs.ignore_holiday }}" = "true" ]; then
+            ARGS="$ARGS --ignore-holiday"
+          fi
+          python3 monitor.py $ARGS
 
       - name: Commit updated state
         run: |
