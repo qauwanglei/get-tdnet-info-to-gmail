@@ -23,12 +23,13 @@ concurrency:
 jobs:
   run-monitor:
     runs-on: ubuntu-latest
+    environment: Development  # Secretsが登録されているEnvironment名に合わせて変更
     steps:
       - name: Checkout repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.11"
 
@@ -56,4 +57,6 @@ jobs:
             echo "No state changes to commit."
           else
             git commit -m "chore: update tdnet notified state"
-            git pull --rebase origin "${GITHUB_REF
+            git pull --rebase origin "${GITHUB_REF_NAME}"
+            git push origin "HEAD:${GITHUB_REF_NAME}"
+          fi
