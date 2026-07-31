@@ -67,6 +67,46 @@ REQUEST_INTERVAL_SEC = 1.5  # サーバー負荷軽減のため、ページ間�
 
 STATE_DIR = "state"
 
+FINANCIAL_KEYWORDS = [
+    # 決算
+    "決算短信",
+    "四半期決算短信",
+    "中間決算短信",
+    "通期決算短信",
+
+    # 決算資料
+    "決算補足説明資料",
+    "決算説明資料",
+    "決算説明会資料",
+
+    # 業績
+    "業績予想",
+    "業績予想の修正",
+    "業績修正",
+    "通期業績予想",
+    "四半期業績予想",
+
+    # 配当
+    "配当予想",
+    "配当予想の修正",
+    "配当",
+
+    # 法定開示
+    "有価証券報告書",
+    "四半期報告書",
+    "決算訂正",
+
+    # 株価インパクトの大きい重要開示
+    "上方修正",
+    "下方修正",
+    "自己株式取得",
+    "自己株式の取得",
+    "自己株式の消却",
+    "株式分割",
+    "株式併合",
+    "公開買付",
+    "TOB",
+]
 
 def is_market_holiday(date_obj: dt.date) -> Optional[str]:
     """東証が休場と考えられる日ならその理由（文字列）を返す。開場日ならNone。
@@ -203,6 +243,13 @@ def filter_by_codes(items: List[Dict], codes: Optional[List[str]]) -> List[Dict]
     code_set = {c.strip() for c in codes if c.strip()}
     return [it for it in items if it["code"] in code_set]
 
+def filter_financial(items: List[Dict]) -> List[Dict]:
+    """財務・決算関連の開示だけを残す。"""
+    return [
+        item
+        for item in items
+        if any(keyword in item["title"] for keyword in FINANCIAL_KEYWORDS)
+    ]
 
 def build_email_html(items: List[Dict], date_str: str) -> str:
     date_fmt = f"{date_str[0:4]}/{date_str[4:6]}/{date_str[6:8]}"
@@ -328,7 +375,8 @@ def main():
     print(f"[INFO] 全{len(all_items)}件取得。フィルタ対象コード: {codes or '全件'}")
 
     filtered = filter_by_codes(all_items, codes)
-    print(f"[INFO] フィルタ後: {len(filtered)}件")
+    filtered = filter_financial(filtered)
+    print(f"[INFO] 財務関連フィルタ後: {len(filtered)}件")
 
     # 前回までに通知済みのキーと比較し、新規分だけを抽出する
     sent_keys = load_sent_keys(args.date)
