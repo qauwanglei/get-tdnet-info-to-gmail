@@ -2,24 +2,18 @@ name: TDnet Monitor
 
 on:
   schedule:
-    # UTC日曜-木曜 23:00, 23:30
-    # = JST月曜-金曜 08:00, 08:30
-    - cron: "0,30 23 * * 0-4"
-
-    # UTC月曜-金曜 00:00～08:30
-    # = JST月曜-金曜 09:00～17:30
-    - cron: "0,30 0-8 * * 1-5"
-
-    # UTC月曜-金曜 09:00
-    # = JST月曜-金曜 18:00
-    - cron: "0 9 * * 1-5"
+    # JST月曜-金曜 08:02～17:32、18:02。混雑する毎時0分を避ける。
+    - cron: "2,32 8-17 * * 1-5"
+      timezone: "Asia/Tokyo"
+    - cron: "2 18 * * 1-5"
+      timezone: "Asia/Tokyo"
   workflow_dispatch: {}  # Actionsタブから手動実行できるように
 
 # stateファイルをリポジトリにコミットし直すために書き込み権限が必要
 permissions:
   contents: write
 
-# ジョブが重なった場合に、前のrunが終わるまで待たせる
+# 同じ通知を重複送信しないように同時実行を防ぐ
 concurrency:
   group: tdnet-monitor
   cancel-in-progress: false
@@ -31,6 +25,9 @@ jobs:
     steps:
       - name: Checkout repo
         uses: actions/checkout@v5
+        with:
+          # 待機中に前の実行が更新した通知済みstateを取得する
+          ref: ${{ github.ref }}
 
       - name: Set up Python
         uses: actions/setup-python@v6
@@ -40,20 +37,50 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Compute JST date
-        id: jst_date
-        run: echo "date=$(TZ='Asia/Tokyo' date +%Y%m%d)" >> "$GITHUB_OUTPUT"
+      - name: Compute JST dates
+        id: jst_dates
+        run: |
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import datetime as dt
+          import os
+          from zoneinfo import ZoneInfo
+
+          from monitor import is_market_holiday
+
+          today = dt.datetime.now(ZoneInfo("Asia/Tokyo")).date()
+          dates = [today]
+          if os.environ["GITHUB_EVENT_NAME"] == "schedule":
+              # 遅延や実行漏れで未通知の前営業日分も確認する
+              previous = today - dt.timedelta(days=1)
+              while is_market_holiday(previous):
+                  previous -= dt.timedelta(days=1)
+              dates.append(previous)
+
+          print("dates=" + " ".join(day.strftime("%Y%m%d") for day in dates))
+          PY
 
       - name: Run TDnet monitor
+        id: monitor
         env:
+          TDNET_DATES: ${{ steps.jst_dates.outputs.dates }}
           GMAIL_USER: ${{ secrets.GMAIL_USER }}
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
           RECIPIENT_EMAIL: ${{ secrets.RECIPIENT_EMAIL }}
           TARGET_CODES: ${{ secrets.TARGET_CODES }}
-        run: python3 monitor.py --date "${{ steps.jst_date.outputs.date }}"
+        run: |
+          result=0
+          for date in $TDNET_DATES; do
+            python3 monitor.py --date "$date" || result=$?
+          done
+          exit "$result"
 
       - name: Commit updated state
+        if: ${{ !cancelled() && (steps.monitor.outcome == 'success' || steps.monitor.outcome == 'failure') }}
         run: |
+          if [ ! -d state ]; then
+            echo "No state changes to commit."
+            exit 0
+          fi
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add state/
